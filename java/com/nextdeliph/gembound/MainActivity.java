@@ -5,7 +5,6 @@ import android.os.Bundle;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
@@ -34,10 +33,10 @@ public class MainActivity extends Activity {
 
         screen = new TextView(this);
         screen.setTextColor(Color.WHITE);
-        screen.setTextSize(14);
+        screen.setTextSize(18);
         screen.setTypeface(Typeface.MONOSPACE);
         screen.setGravity(Gravity.TOP | Gravity.START);
-        screen.setPadding(12, 12, 12, 8);
+        screen.setPadding(20, 20, 20, 20);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(screen);
@@ -70,8 +69,13 @@ public class MainActivity extends Activity {
 
         setContentView(root);
 
-        nativeStart();
-        refresh();
+        // Diagnostic mode:
+        // Do NOT start the C++ game yet.
+        screen.setText(
+            "GEMBOUND ANDROID\n\n" +
+            "Java layer loaded successfully.\n\n" +
+            "C++ startup is temporarily disabled."
+        );
     }
 
     private void addButton(
@@ -83,8 +87,7 @@ public class MainActivity extends Activity {
         button.setText(label);
 
         button.setOnClickListener(v -> {
-            nativeCommand(command);
-            refresh();
+            screen.append("\nButton: " + label);
         });
 
         GridLayout.LayoutParams params =
@@ -96,9 +99,5 @@ public class MainActivity extends Activity {
             GridLayout.spec(GridLayout.UNDEFINED, 1f);
 
         grid.addView(button, params);
-    }
-
-    private void refresh() {
-        screen.setText(nativeScreen());
     }
 }
