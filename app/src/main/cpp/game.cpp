@@ -1,312 +1,840 @@
-#include <iostream>
+#include <jni.h>
 #include <string>
 #include <vector>
 #include <cstdlib>
 #include <cmath>
 #include <map>
+#include <sstream>
+#include <algorithm>
 
 using namespace std;
 
-const string C_PL = "\033[93m";
-const string C_MN = "\033[31m";
-const string C_HT = "\033[91m";
-const string C_VN = "\033[96m";
-const string C_AM = "\033[92m";
-const string C_CH = "\033[33m";
-const string C_FD = "\033[32m";
-const string C_RS = "\033[0m";
-
 const int H = 20;
 const int W = 40;
-vector<vector<string>> mine_map(
-  H, vector<string>(W, ".")
-);
+
+vector<vector<string>> mine_map(H, vector<string>(W, "."));
 
 int p_y = 2, p_x = 2;
 int p_hp = 30, max_hp = 30;
 int gems = 0;
 int monsters_slain = 0;
 bool has_amulet = false;
+bool game_over = false;
+bool won = false;
+bool shop_open = false;
 
 string weapon = "Pickaxe";
-int p_atk = 5, s_atk = 6;
-int p_cost = 3, s_cost = 4;
+
+int p_atk = 5;
+int s_atk = 6;
+int p_cost = 3;
+int s_cost = 4;
 
 int armor_tier = 0;
+
 string armor_names[] = {
-  "None", "Steel", "Metal",
-  "Gold", "Crysteel"
+    "None",
+    "Steel",
+    "Metal",
+    "Gold",
+    "Crysteel"
 };
+
 int armor_costs[] = {
-  0, 4, 6, 9, 15
+    0, 4, 6, 9, 15
 };
 
 map<pair<int,int>, int> rock_hp;
 map<pair<int,int>, int> monster_hp;
 
-pair<int,int> flash_coord = {
-  -1, -1
-};
-string log_msg = 
-  "Objective: Find the Amulet (&)!";
+string log_msg = "Objective: Find the Amulet (&)!";
 
 void build_map() {
-  for (int y = 0; y < H; y++) {
-    for (int x = 0; x < W; x++) {
-      if (y == 0 || y == H-1 || 
-          x == 0 || x == W-1) {
-        mine_map[y][x] = "#";
-      }
-      else if (y == 5 || y == 14) {
-        if (x != 10 && x != 30) {
-          mine_map[y][x] = "#";
-        } else {
-          mine_map[y][x] = "+";
+
+    mine_map.assign(H, vector<string>(W, "."));
+
+    rock_hp.clear();
+    monster_hp.clear();
+
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+
+            if (y == 0 || y == H - 1 ||
+                x == 0 || x == W - 1) {
+
+                mine_map[y][x] = "#";
+            }
+
+            else if (y == 5 || y == 14) {
+
+                if (x != 10 && x != 30)
+                    mine_map[y][x] = "#";
+                else
+                    mine_map[y][x] = "+";
+            }
+
+            else if (x == 15 || x == 25) {
+
+                if (y != 3 && y != 10 && y != 17)
+                    mine_map[y][x] = "#";
+                else
+                    mine_map[y][x] = "+";
+            }
         }
-      }
-      else if (x == 15 || x == 25) {
-        if (y != 3 && y != 10 && 
-            y != 17) {
-          mine_map[y][x] = "#";
-        } else {
-          mine_map[y][x] = "+";
-        }
-      }
     }
-  }
-  mine_map[3][18] = "@";
-  mine_map[8][6] = "@";
-  mine_map[8][14] = "@";
-  mine_map[12][22] = "@";
-  mine_map[13][2] = "@";
-  mine_map[2][20] = "M";
-  mine_map[8][10] = "M";
-  mine_map[14][17] = "M";
-  mine_map[7][22] = "%";
-  mine_map[13][35] = "%";
-  mine_map[1][5] = "%";
-  mine_map[15][38] = "&";
-  mine_map[p_y][p_x] = "Y";
+
+    mine_map[3][18] = "@";
+    mine_map[8][6] = "@";
+    mine_map[8][14] = "@";
+    mine_map[12][22] = "@";
+    mine_map[13][2] = "@";
+
+    mine_map[2][20] = "M";
+    mine_map[8][10] = "M";
+    mine_map[14][17] = "M";
+
+    mine_map[7][22] = "%";
+    mine_map[13][35] = "%";
+    mine_map[1][5] = "%";
+
+    mine_map[15][38] = "&";
+
+    mine_map[p_y][p_x] = "Y";
 }
 
-int calculate_score(bool won) {
-  int score = gems + 
-              (monsters_slain * 10);
-  if (won) score += 500;
-  return score;
+int calculate_score(bool victory) {
+
+    int score = gems + (monsters_slain * 10);
+
+    if (victory)
+        score += 500;
+
+    return score;
 }
 
-// Separate function for Monster Turn
 void monster_turn() {
-  // 1. Monsters move toward the player if close enough
-  vector<pair<int,int>> mlist;
-  for (int my = 0; my < H; my++) {
-    for (int mx = 0; mx < W; mx++) {
-      if (mine_map[my][mx] == "M") {
-        mlist.push_back({my, mx});
-      }
-    }
-  }
-  for (auto m : mlist) {
-    int my = m.first, mx = m.second;
-    int dy = p_y - my, dx = p_x - mx;
-    if (abs(dy) <= 6 && abs(dx) <= 6) {
-      int sy = my, sx = mx;
-      if (dy > 0) sy++; 
-      else if (dy < 0) sy--;
-      if (dx > 0) sx++; 
-      else if (dx < 0) sx--;
-      
-      if (sy != my && mine_map[sy][mx] == ".") {
-        int m_val = 15;
-        if (monster_hp.find({my, mx}) != monster_hp.end()) {
-          m_val = monster_hp[{my, mx}];
-        }
-        mine_map[my][mx] = "."; 
-        mine_map[sy][mx] = "M";
-        monster_hp[{sy, mx}] = m_val; 
-        monster_hp.erase({my, mx});
-      }
-      else if (sx != mx && mine_map[my][sx] == ".") {
-        int m_val = 15;
-        if (monster_hp.find({my, mx}) != monster_hp.end()) {
-          m_val = monster_hp[{my, mx}];
-        }
-        mine_map[my][mx] = "."; 
-        mine_map[my][sx] = "M";
-        monster_hp[{my, sx}] = m_val; 
-        monster_hp.erase({my, mx});
-      }
-    }
-  }
 
-  // 2. Monsters attack the player if adjacent
-  int adj_y[] = {p_y-1, p_y+1, p_y, p_y};
-  int adj_x[] = {p_x, p_x, p_x-1, p_x+1};
-  for (int i = 0; i < 4; i++) {
-    int ny = adj_y[i];
-    int nx = adj_x[i];
-    if (ny >= 0 && ny < H && nx >= 0 && nx < W && mine_map[ny][nx] == "M") {
-      string ca = armor_names[armor_tier];
-      int dmg = (ca == "None") ? 3 : (ca == "Steel") ? 2 : (ca == "Metal" || ca == "Gold") ? 1 : 0;
-      p_hp -= dmg; 
-      log_msg += " Monster hit you! -" + to_string(dmg) + " HP.";
+    vector<pair<int,int>> monsters;
+
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+
+            if (mine_map[y][x] == "M")
+                monsters.push_back({y, x});
+        }
     }
-  }
+
+    for (auto m : monsters) {
+
+        int my = m.first;
+        int mx = m.second;
+
+        int dy = p_y - my;
+        int dx = p_x - mx;
+
+        if (abs(dy) <= 6 && abs(dx) <= 6) {
+
+            int sy = my;
+            int sx = mx;
+
+            if (dy > 0)
+                sy++;
+            else if (dy < 0)
+                sy--;
+
+            if (sy != my &&
+                sy >= 0 && sy < H &&
+                mine_map[sy][mx] == ".") {
+
+                int hp = 15;
+
+                if (monster_hp.count({my, mx}))
+                    hp = monster_hp[{my, mx}];
+
+                mine_map[my][mx] = ".";
+                mine_map[sy][mx] = "M";
+
+                monster_hp[{sy, mx}] = hp;
+                monster_hp.erase({my, mx});
+            }
+
+            else {
+
+                if (dx > 0)
+                    sx++;
+                else if (dx < 0)
+                    sx--;
+
+                if (sx != mx &&
+                    sx >= 0 && sx < W &&
+                    mine_map[my][sx] == ".") {
+
+                    int hp = 15;
+
+                    if (monster_hp.count({my, mx}))
+                        hp = monster_hp[{my, mx}];
+
+                    mine_map[my][mx] = ".";
+                    mine_map[my][sx] = "M";
+
+                    monster_hp[{my, sx}] = hp;
+                    monster_hp.erase({my, mx});
+                }
+            }
+        }
+    }
+
+    int adj_y[] = {
+        p_y - 1,
+        p_y + 1,
+        p_y,
+        p_y
+    };
+
+    int adj_x[] = {
+        p_x,
+        p_x,
+        p_x - 1,
+        p_x + 1
+    };
+
+    for (int i = 0; i < 4; i++) {
+
+        int y = adj_y[i];
+        int x = adj_x[i];
+
+        if (y >= 0 && y < H &&
+            x >= 0 && x < W &&
+            mine_map[y][x] == "M") {
+
+            int damage;
+
+            if (armor_tier == 0)
+                damage = 3;
+            else if (armor_tier == 1)
+                damage = 2;
+            else if (armor_tier == 2 || armor_tier == 3)
+                damage = 1;
+            else
+                damage = 0;
+
+            p_hp -= damage;
+
+            log_msg =
+                "Monster hit you! -" +
+                to_string(damage) +
+                " HP.";
+        }
+    }
+
+    if (p_hp <= 0) {
+        game_over = true;
+        won = false;
+        log_msg = "PERISHED.";
+    }
 }
 
-int main() {
-  build_map();
-  while (true) {
-    if (p_hp <= 0) { 
-      cout << "\nPERISHED. Score: " << calculate_score(false) << endl; 
-      break; 
-    }
+void player_action() {
 
-    system("clear");
-    cout << "LOG: " << log_msg << endl;
-    cout << "=============================" << endl;
-    
-    int CAM = 5;
-    int s_y = max(0, p_y - CAM);
-    int e_y = min(H, p_y + CAM + 1);
-    
-    for (int y = s_y; y < e_y; y++) {
-      string row_str = "";
-      int s_x = max(0, p_x - CAM);
-      int e_x = min(W, p_x + CAM + 1);
-      
-      for (int x = s_x; x < e_x; x++) {
-        string tile = mine_map[y][x];
-        if (tile == "Y") row_str += C_PL + tile + C_RS + " ";
-        else if (tile == "M") {
-          if (flash_coord.first == y && flash_coord.second == x) {
-            row_str += C_HT + tile + C_RS + " ";
-          } else {
-            row_str += C_MN + tile + C_RS + " ";
-          }
-        }
-        else if (tile == "V") row_str += C_VN + tile + C_RS + " ";
-        else if (tile == "&") row_str += C_AM + tile + C_RS + " ";
-        else if (tile == "$") row_str += C_CH + tile + C_RS + " ";
-        else if (tile == "%") row_str += C_FD + tile + C_RS + " ";
-        else row_str += tile + " ";
-      }
-      cout << row_str << endl;
-    }
-    
-    cout << "=============================" << endl;
-    cout << "HP: " << p_hp << "/" << max_hp << " | Gems: " << gems << endl;
-    cout << "Amulet Status: [" << (has_amulet ? "SECURED" : "MISSING") << "]" << endl;
-    cout << "Arm: [" << armor_names[armor_tier] << "] | Slain: " << monsters_slain << endl;
-    cout << "Wpn: [" << weapon << "] (P:" << p_atk << " S:" << s_atk << ")" << endl;
-    cout << "W/A/S/D=Move | F=Act | P=Shop | Q=Quit" << endl;
-    cout << "=============================" << endl;
-    
-    cout << ": ";
-    string raw_input;
-    cin >> raw_input;
-    if (raw_input.empty()) continue;
-    char cmd = raw_input[0];
+    int adj_y[] = {
+        p_y - 1,
+        p_y + 1,
+        p_y,
+        p_y
+    };
 
-    flash_coord = {-1, -1};
+    int adj_x[] = {
+        p_x,
+        p_x,
+        p_x - 1,
+        p_x + 1
+    };
 
-    if (cmd == '1') { weapon = "Pickaxe"; log_msg = "Ready: Pickaxe."; continue; }
-    if (cmd == '2') { weapon = "Sword"; log_msg = "Ready: Sword."; continue; }
-    if (cmd == 'q') { cout << "\nAbandoned. Score: " << calculate_score(false) << endl; break; }
+    bool acted = false;
 
-    if (cmd == 'p') {
-      system("clear");
-      cout << "=== SHOP ===" << endl;
-      cout << "Gems: " << gems << endl;
-      cout << "1. Pik (+3) - Cost: " << p_cost << endl;
-      cout << "2. Srd (+3) - Cost: " << s_cost << endl;
-      if (armor_tier < 4) {
-        int nt = armor_tier + 1;
-        cout << "3. " << armor_names[nt] << " - Cst: " << armor_costs[nt] << endl;
-      }
-      cout << "4. Exit\n? ";
-      char sc; cin >> sc;
-      if (sc == '1' && gems >= p_cost) { gems -= p_cost; p_atk += 3; p_cost += 3; log_msg = "SHOP: Upgraded Pickaxe!"; }
-      else if (sc == '2' && gems >= s_cost) { gems -= s_cost; s_atk += 3; s_cost += 4; log_msg = "SHOP: Upgraded Sword!"; }
-      else if (sc == '3' && armor_tier < 4) {
-        int nt = armor_tier + 1;
-        if (gems >= armor_costs[nt]) {
-          gems -= armor_costs[nt]; armor_tier = nt; log_msg = "Bought armor!"; 
-          if (armor_names[nt] == "Gold") { max_hp = 45; p_hp = 45; }
-        }
-      }
-      continue;
-    }
+    for (int i = 0; i < 4; i++) {
 
-    if (cmd == 'f') {
-      int adj_y[] = {p_y-1, p_y+1, p_y, p_y};
-      int adj_x[] = {p_x, p_x, p_x-1, p_x+1};
-      bool acted = false;
-      
-      for (int i = 0; i < 4; i++) {
-        int ny = adj_y[i], nx = adj_x[i];
-        if (ny >= 0 && ny < H && nx >= 0 && nx < W) {
-          string tgt = mine_map[ny][nx];
-          if (tgt == "@") {
+        int y = adj_y[i];
+        int x = adj_x[i];
+
+        if (y < 0 || y >= H ||
+            x < 0 || x >= W)
+            continue;
+
+        string target = mine_map[y][x];
+
+        // ROCK
+        if (target == "@") {
+
             if (weapon == "Pickaxe") {
-              pair<int,int> rc = {ny, nx};
-              if (rock_hp.find(rc) == rock_hp.end()) rock_hp[rc] = 10;
-              rock_hp[rc] -= p_atk;
-              if (rock_hp[rc] > 0) log_msg = "Rock HP: " + to_string(rock_hp[rc]) + "/10";
-              else {
-                int roll = rand() % 100;
-                if (roll < 20) { mine_map[ny][nx] = "$"; log_msg = "Chest found!"; }
-                else if (roll <= 48) { mine_map[ny][nx] = "V"; log_msg = "Vein dropped!"; }
-                else { mine_map[ny][nx] = "*"; log_msg = "Gem dropped!"; }
-                rock_hp.erase(rc);
-              }
-            } else log_msg = "Use Pickaxe (1).";
-            acted = true; break;
-          }
-          if (tgt == "M") {
-            if (weapon == "Sword") {
-              pair<int,int> mc = {ny, nx};
-              if (monster_hp.find(mc) == monster_hp.end()) monster_hp[mc] = 15;
-              monster_hp[mc] -= s_atk;
-              if (monster_hp[mc] > 0) {
-                log_msg = "Hit Enemy! HP: " + to_string(monster_hp[mc]) + "/15";
-                flash_coord = mc;
-              } else {
-                mine_map[ny][nx] = "."; log_msg = "Monster Slain!";
-                monsters_slain++; monster_hp.erase(mc);
-              }
-            } else log_msg = "Use Sword (2).";
-            acted = true; break;
-          }
+
+                pair<int,int> rock = {y, x};
+
+                if (!rock_hp.count(rock))
+                    rock_hp[rock] = 10;
+
+                rock_hp[rock] -= p_atk;
+
+                if (rock_hp[rock] > 0) {
+
+                    log_msg =
+                        "Rock HP: " +
+                        to_string(rock_hp[rock]) +
+                        "/10";
+                }
+
+                else {
+
+                    int roll = rand() % 100;
+
+                    if (roll < 20) {
+
+                        mine_map[y][x] = "$";
+                        log_msg = "Chest found!";
+                    }
+
+                    else if (roll <= 48) {
+
+                        mine_map[y][x] = "V";
+                        log_msg = "Vein dropped!";
+                    }
+
+                    else {
+
+                        mine_map[y][x] = "*";
+                        log_msg = "Gem dropped!";
+                    }
+
+                    rock_hp.erase(rock);
+                }
+            }
+
+            else {
+
+                log_msg = "Use Pickaxe (1).";
+            }
+
+            acted = true;
+            break;
         }
-      }
-      if (!acted) log_msg = "Nothing near you.";
-      
-      // TRIGGER MONSTER TURN AFTER PLAYER ATTACKS
-      monster_turn();
-      continue;
+
+        // MONSTER
+        if (target == "M") {
+
+            if (weapon == "Sword") {
+
+                pair<int,int> monster = {y, x};
+
+                if (!monster_hp.count(monster))
+                    monster_hp[monster] = 15;
+
+                monster_hp[monster] -= s_atk;
+
+                if (monster_hp[monster] > 0) {
+
+                    log_msg =
+                        "Hit Enemy! HP: " +
+                        to_string(monster_hp[monster]) +
+                        "/15";
+                }
+
+                else {
+
+                    mine_map[y][x] = ".";
+
+                    monsters_slain++;
+
+                    monster_hp.erase(monster);
+
+                    log_msg = "Monster Slain!";
+                }
+            }
+
+            else {
+
+                log_msg = "Use Sword (2).";
+            }
+
+            acted = true;
+            break;
+        }
     }
 
-    int ny = p_y, nx = p_x;
-    if (cmd == 'w') ny--; else if (cmd == 's') ny++; else if (cmd == 'a') nx--; else if (cmd == 'd') nx++; else continue;
-    if (ny < 0 || ny >= H || nx < 0 || nx >= W) { log_msg = "Edge reached."; continue; }
-    
-    string tile = mine_map[ny][nx];
-    if (tile == "-" || tile == "|" || tile == "#" || tile == "@" || tile == "M") { log_msg = "Path blocked."; continue; }
-    
-    if (tile == "*") { gems++; log_msg = "Got Gem!"; }
-    else if (tile == "V") { gems += 3; log_msg = "Got Vein!"; }
-    else if (tile == "%") { p_hp = min(max_hp, p_hp + 10); log_msg = "Healed 10 HP!"; }
-    else if (tile == "$") { int bonus = rand() % 4 + 2; gems += bonus; log_msg = "Chest open! +" + to_string(bonus) + " Gems."; }
-    else if (tile == "&") { has_amulet = true; log_msg = "SECURED AMULET! Run!"; }
-    else log_msg = "Moved.";
-    
-    if (ny == 2 && nx == 2 && has_amulet) {
-      system("clear");
-      cout << "=============" << endl;
-      cout << "you escaped " << "the first mine" << endl;
-cout << "=============" << endl;cout << " Gems: " << gems << endl;cout << " Slain: " << monsters_slain << endl;cout << " SCORE: " << calculate_score(true) << endl;cout << "=============" << endl;break;}if ((p_y == 5 || p_y == 14) && (p_x == 10 || p_x == 30)) mine_map[p_y][p_x] = "+";else if ((p_x == 15 || p_x == 25) && (p_y == 3 || p_y == 10 || p_y == 17)) mine_map[p_y][p_x] = "+";else mine_map[p_y][p_x] = ".";p_x = nx; p_y = ny; mine_map[p_y][p_x] = "Y";// TRIGGER MONSTER TURN AFTER PLAYER MOVESmonster_turn();}return 0;}
+    if (!acted)
+        log_msg = "Nothing near you.";
 
-        } 
-} 
+    monster_turn();
+}
+
+void move_player(char command) {
+
+    int ny = p_y;
+    int nx = p_x;
+
+    if (command == 'w')
+        ny--;
+
+    else if (command == 's')
+        ny++;
+
+    else if (command == 'a')
+        nx--;
+
+    else if (command == 'd')
+        nx++;
+
+    else
+        return;
+
+    if (ny < 0 || ny >= H ||
+        nx < 0 || nx >= W) {
+
+        log_msg = "Edge reached.";
+        return;
+    }
+
+    string tile = mine_map[ny][nx];
+
+    if (tile == "#" ||
+        tile == "@" ||
+        tile == "M" ||
+        tile == "-" ||
+        tile == "|") {
+
+        log_msg = "Path blocked.";
+        return;
+    }
+
+    if (tile == "*") {
+
+        gems++;
+        log_msg = "Got Gem!";
+    }
+
+    else if (tile == "V") {
+
+        gems += 3;
+        log_msg = "Got Vein!";
+    }
+
+    else if (tile == "%") {
+
+        p_hp = min(max_hp, p_hp + 10);
+        log_msg = "Healed 10 HP!";
+    }
+
+    else if (tile == "$") {
+
+        int bonus = rand() % 4 + 2;
+
+        gems += bonus;
+
+        log_msg =
+            "Chest open! +" +
+            to_string(bonus) +
+            " Gems.";
+    }
+
+    else if (tile == "&") {
+
+        has_amulet = true;
+
+        log_msg =
+            "SECURED AMULET! Run!";
+    }
+
+    else {
+
+        log_msg = "Moved.";
+    }
+
+    mine_map[p_y][p_x] = ".";
+
+    p_x = nx;
+    p_y = ny;
+
+    mine_map[p_y][p_x] = "Y";
+
+    if (p_y == 2 &&
+        p_x == 2 &&
+        has_amulet) {
+
+        game_over = true;
+        won = true;
+
+        log_msg =
+            "YOU ESCAPED THE FIRST MINE!";
+
+        return;
+    }
+
+    monster_turn();
+}
+
+void shop_command(char command) {
+
+    if (command == '4') {
+
+        shop_open = false;
+        log_msg = "Left shop.";
+
+        return;
+    }
+
+    if (command == '1' &&
+        gems >= p_cost) {
+
+        gems -= p_cost;
+
+        p_atk += 3;
+
+        p_cost += 3;
+
+        log_msg =
+            "Upgraded Pickaxe!";
+    }
+
+    else if (command == '2' &&
+             gems >= s_cost) {
+
+        gems -= s_cost;
+
+        s_atk += 3;
+
+        s_cost += 4;
+
+        log_msg =
+            "Upgraded Sword!";
+    }
+
+    else if (command == '3' &&
+             armor_tier < 4) {
+
+        int next = armor_tier + 1;
+
+        if (gems >= armor_costs[next]) {
+
+            gems -= armor_costs[next];
+
+            armor_tier = next;
+
+            log_msg =
+                "Bought " +
+                armor_names[next] +
+                " armor!";
+
+            if (next == 3) {
+
+                max_hp = 45;
+                p_hp = 45;
+            }
+        }
+
+        else {
+
+            log_msg = "Not enough gems.";
+        }
+    }
+
+    else {
+
+        log_msg =
+            "Not enough gems or invalid choice.";
+    }
+}
+
+string render_game() {
+
+    ostringstream out;
+
+    out << "========== GEMBOUND ==========\n";
+
+    out << "LOG: "
+        << log_msg
+        << "\n";
+
+    out << "==============================\n";
+
+    if (shop_open) {
+
+        out << "\n";
+        out << "=========== SHOP =============\n";
+
+        out << "Gems: "
+            << gems
+            << "\n\n";
+
+        out << "1. Pickaxe +3   Cost: "
+            << p_cost
+            << "\n";
+
+        out << "2. Sword +3     Cost: "
+            << s_cost
+            << "\n";
+
+        if (armor_tier < 4) {
+
+            int next = armor_tier + 1;
+
+            out << "3. "
+                << armor_names[next]
+                << "     Cost: "
+                << armor_costs[next]
+                << "\n";
+        }
+
+        out << "4. Exit\n";
+
+        out << "==============================\n";
+
+        return out.str();
+    }
+
+    if (game_over) {
+
+        out << "\n";
+
+        if (won)
+            out << "YOU ESCAPED THE FIRST MINE!\n";
+        else
+            out << "PERISHED.\n";
+
+        out << "\n";
+
+        out << "Gems: "
+            << gems
+            << "\n";
+
+        out << "Slain: "
+            << monsters_slain
+            << "\n";
+
+        out << "SCORE: "
+            << calculate_score(won)
+            << "\n";
+
+        out << "==============================\n";
+
+        return out.str();
+    }
+
+    int camera = 5;
+
+    int start_y =
+        max(0, p_y - camera);
+
+    int end_y =
+        min(H, p_y + camera + 1);
+
+    int start_x =
+        max(0, p_x - camera);
+
+    int end_x =
+        min(W, p_x + camera + 1);
+
+    for (int y = start_y;
+         y < end_y;
+         y++) {
+
+        for (int x = start_x;
+             x < end_x;
+             x++) {
+
+            out << mine_map[y][x]
+                << ' ';
+        }
+
+        out << '\n';
+    }
+
+    out << "==============================\n";
+
+    out << "HP: "
+        << p_hp
+        << "/"
+        << max_hp
+        << " | Gems: "
+        << gems
+        << "\n";
+
+    out << "Amulet: ["
+        << (has_amulet ? "SECURED" : "MISSING")
+        << "]\n";
+
+    out << "Armor: ["
+        << armor_names[armor_tier]
+        << "] | Slain: "
+        << monsters_slain
+        << "\n";
+
+    out << "Weapon: ["
+        << weapon
+        << "]\n";
+
+    out << "Pickaxe ATK: "
+        << p_atk
+        << "\n";
+
+    out << "Sword ATK: "
+        << s_atk
+        << "\n";
+
+    out << "\n";
+    out << "W A S D = MOVE\n";
+    out << "F = ACT\n";
+    out << "1 = PICKAXE\n";
+    out << "2 = SWORD\n";
+    out << "SHOP = SHOP\n";
+
+    return out.str();
+}
+
+
+// ============================================================
+// ANDROID / JNI
+// ============================================================
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_nextdeliph_gembound_MainActivity_nativeStart(
+    JNIEnv*,
+    jobject) {
+
+    srand(1);
+
+    p_y = 2;
+    p_x = 2;
+
+    p_hp = 30;
+    max_hp = 30;
+
+    gems = 0;
+
+    monsters_slain = 0;
+
+    has_amulet = false;
+
+    game_over = false;
+
+    won = false;
+
+    shop_open = false;
+
+    weapon = "Pickaxe";
+
+    p_atk = 5;
+    s_atk = 6;
+
+    p_cost = 3;
+    s_cost = 4;
+
+    armor_tier = 0;
+
+    log_msg =
+        "Objective: Find the Amulet (&)!";
+
+    build_map();
+}
+
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_nextdeliph_gembound_MainActivity_nativeScreen(
+    JNIEnv* env,
+    jobject) {
+
+    string screen =
+        render_game();
+
+    return env->NewStringUTF(
+        screen.c_str()
+    );
+}
+
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_nextdeliph_gembound_MainActivity_nativeCommand(
+    JNIEnv* env,
+    jobject,
+    jstring command) {
+
+    const char* chars =
+        env->GetStringUTFChars(
+            command,
+            nullptr
+        );
+
+    string input =
+        chars ? chars : "";
+
+    env->ReleaseStringUTFChars(
+        command,
+        chars
+    );
+
+    if (!input.empty() &&
+        !game_over) {
+
+        char command_char =
+            input[0];
+
+        if (shop_open) {
+
+            shop_command(command_char);
+        }
+
+        else if (command_char == '1') {
+
+            weapon = "Pickaxe";
+
+            log_msg =
+                "Ready: Pickaxe.";
+        }
+
+        else if (command_char == '2') {
+
+            weapon = "Sword";
+
+            log_msg =
+                "Ready: Sword.";
+        }
+
+        else if (command_char == 'p') {
+
+            shop_open = true;
+
+            log_msg =
+                "Shop opened.";
+        }
+
+        else if (command_char == 'f') {
+
+            player_action();
+        }
+
+        else if (command_char == 'w' ||
+                 command_char == 'a' ||
+                 command_char == 's' ||
+                 command_char == 'd') {
+
+            move_player(command_char);
+        }
+
+        else if (command_char == 'q') {
+
+            game_over = true;
+            won = false;
+
+            log_msg =
+                "Abandoned.";
+        }
+    }
+
+    string screen =
+        render_game();
+
+    return env->NewStringUTF(
+        screen.c_str()
+    );
+}
